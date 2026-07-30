@@ -1,0 +1,43 @@
+name: Ecount 미결재 카카오 알림
+
+on:
+  schedule:
+    - cron: '0 23 * * *' # 매일 08:00 KST (UTC+9)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Ecount -> Kakao alert
+        env:
+          ECOUNT_COM_CODE: ${{ secrets.ECOUNT_COM_CODE }}
+          ECOUNT_ID: ${{ secrets.ECOUNT_ID }}
+          ECOUNT_PASSWORD: ${{ secrets.ECOUNT_PASSWORD }}
+          ECOUNT_APPROVER_NAME: ${{ secrets.ECOUNT_APPROVER_NAME }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+        run: npm start
