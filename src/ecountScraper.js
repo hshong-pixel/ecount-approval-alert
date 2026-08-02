@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+import { mkdir, writeFile } from 'fs/promises';
+import path from 'path';
 
 // 로그인 후 클릭 순서: 그룹웨어 탭 -> 전자결재 서브탭 -> 기안서통합관리(좌측 메뉴) -> 진행중 탭
 const NAV_STEPS = ['그룹웨어', '전자결재', '기안서통합관리', '진행중'];
@@ -56,6 +58,17 @@ function extractorInPage(approverName) {
   return { found: false };
 }
 
+async function saveDebugArtifacts(page, logger) {
+  const dir = path.join(process.cwd(), 'debug-artifacts');
+  await mkdir(dir, { recursive: true });
+  const screenshotPath = path.join(dir, 'failure.png');
+  const htmlPath = path.join(dir, 'failure.html');
+  await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+  const html = await page.content().catch(() => '');
+  await writeFile(htmlPath, html, 'utf8').catch(() => {});
+  logger.warn(`디버그용 스크린샷/HTML 저장됨: ${screenshotPath}, ${htmlPath} (Actions 아티팩트로 업로드됨)`);
+}
+
 async function findApprovalTable(page, approverName, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -74,9 +87,10 @@ async function findApprovalTable(page, approverName, timeoutMs = 15000) {
 
 export async function fetchPendingApprovals(config, logger) {
   const browser = await chromium.launch({ headless: true });
+  let page;
   try {
     const context = await browser.newContext();
-    const page = await context.newPage();
+    page = await context.newPage();
     // 중복 로그인 등 confirm/alert 팝업이 뜨면 자동으로 수락 (헤드리스 실행이라 사람이 클릭할 수 없음)
     page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
 
@@ -92,9 +106,11 @@ export async function fetchPendingApprovals(config, logger) {
       await page.waitForFunction(() => !location.href.includes('login.ecount.com'), { timeout: 30000 });
     } catch (err) {
       const bodyText = await page.textContent('body').catch(() => '');
-      throw new Error(`로그인 실패 또는 응답 시간 초과. 화면 내용 일부: ${(bodyText || '').slice(0, 200)}`);
+      throw new Error(
+        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 500)}`
+      );
     }
-    logger.info('로그인 성공');
+    logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
 
     for (const step of NAV_STEPS) {
       await clickTextInAnyFrame(page, step);
@@ -110,6 +126,11 @@ export async function fetchPendingApprovals(config, logger) {
 
     logger.info(`전체 ${result.totalCount}건 중 결재자="${config.approverName}" 필터 후 ${result.rows.length}건`);
     return result.rows;
+  } catch (err) {
+    if (page) {
+      await saveDebugArtifacts(page, logger);
+    }
+    throw err;
   } finally {
     await browser.close().catch(() => {});
   }
