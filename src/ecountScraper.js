@@ -153,6 +153,10 @@ export async function fetchPendingApprovals(config, logger) {
 
     logger.info('이카운트 로그인 페이지 접속 중');
     await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' });
+    // 로그인 버튼의 클릭 핸들러(excuteLogin 등)는 별도 JS 모듈이 비동기로 로드된 뒤에야 연결된다.
+    // 헤드리스 환경은 실제 사용자보다 타이핑이 빨라 그 로드가 끝나기 전에 클릭이 발생할 수 있어,
+    // 네트워크가 잠잠해질 때까지(=관련 모듈 로드 완료) 기다린 뒤 입력을 시작한다.
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
     // 이 로그인 폼은 #save가 type="button"이라 자체 제출 기능이 없고, 자바스크립트가 keyup 등
     // 키 입력 이벤트로 "입력 완료"를 감지해 클릭을 처리하는 구조로 보인다. fill()은 값만 넣고
