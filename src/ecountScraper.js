@@ -101,26 +101,34 @@ export async function fetchPendingApprovals(config, logger) {
     });
     page = await context.newPage();
     // 중복 로그인 등 confirm/alert 팝업이 뜨면 자동으로 수락 (헤드리스 실행이라 사람이 클릭할 수 없음)
-    page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
+    page.on('dialog', (dialog) => {
+      networkLog.push(`[dialog] type=${dialog.type()} message=${dialog.message()}`);
+      dialog.accept().catch(() => {});
+    });
     page.on('console', (msg) => networkLog.push(`[console:${msg.type()}] ${msg.text()}`));
+    page.on('pageerror', (err) => networkLog.push(`[pageerror] ${err.message}`));
+    page.on('request', (req) => {
+      if (req.method() === 'POST' || /login|auth|save/i.test(req.url())) {
+        networkLog.push(`[request] ${req.method()} ${req.url()}`);
+      }
+    });
     page.on('response', async (response) => {
-      try {
-        const req = response.request();
-        if (req.method() === 'POST' && response.url().replace(/\/$/, '') === config.loginUrl.replace(/\/$/, '')) {
-          const bodySnippet = await response.text().catch(() => '');
-          networkLog.push(`[login POST] status=${response.status()} body=${bodySnippet.slice(0, 1000)}`);
-        }
-      } catch (e) {
-        // 응답 본문을 읽을 수 없는 경우 무시
+      const req = response.request();
+      if (req.method() === 'POST' || /login|auth|save/i.test(response.url())) {
+        const bodySnippet = await response.text().catch(() => '(body unavailable)');
+        networkLog.push(`[response] status=${response.status()} url=${response.url()} body=${bodySnippet.slice(0, 500)}`);
       }
     });
 
     logger.info('이카운트 로그인 페이지 접속 중');
     await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' });
 
-    await page.fill('#com_code', config.comCode);
-    await page.fill('#id', config.id);
-    await page.fill('#passwd', config.password);
+    // 이 로그인 폼은 #save가 type="button"이라 자체 제출 기능이 없고, 자바스크립트가 keyup 등
+    // 키 입력 이벤트로 "입력 완료"를 감지해 클릭을 처리하는 구조로 보인다. fill()은 값만 넣고
+    // 키 이벤트를 발생시키지 않아 클릭이 무시될 수 있어, 실제 타이핑처럼 한 글자씩 입력한다.
+    await page.locator('#com_code').pressSequentially(config.comCode, { delay: 30 });
+    await page.locator('#id').pressSequentially(config.id, { delay: 30 });
+    await page.locator('#passwd').pressSequentially(config.password, { delay: 30 });
     await page.click('#save');
 
     try {
@@ -128,7 +136,7 @@ export async function fetchPendingApprovals(config, logger) {
     } catch (err) {
       const bodyText = await page.textContent('body').catch(() => '');
       throw new Error(
-        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 500)}. 네트워크/콘솔 로그: ${networkLog.slice(-10).join(' | ')}`
+        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 300)}. 네트워크/콘솔 로그: ${networkLog.join(' | ')}`
       );
     }
     logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
