@@ -3,8 +3,10 @@ import { logger } from './logger.js';
 import { fetchPendingApprovals } from './ecountScraper.js';
 import { refreshAccessToken, sendKakaoMemo } from './kakaoNotifier.js';
 
-// 카카오 "나에게 보내기" text 템플릿은 길이 제한이 있어, 넉넉히 여유를 두고 나눠 보낸다.
-const MAX_CHARS = 180;
+// 카카오 공식 문서상 "text" 템플릿 가이드라인은 200자이지만, 실제로는 더 길게도 전송되는 편이라
+// 웬만한 하루치 건수는 한 메시지에 다 들어가도록 여유 있게 잡는다. 정말 건수가 많아 이 한도를
+// 넘으면 그때만 여러 건으로 나눈다.
+const MAX_CHARS = 900;
 
 function todayLabelKST() {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -24,19 +26,19 @@ function buildMessages(items, dateLabel) {
   let currentLen = header.length;
 
   for (const line of lines) {
-    if (current.length > 0 && currentLen + line.length + 1 > MAX_CHARS) {
+    if (current.length > 0 && currentLen + line.length + 2 > MAX_CHARS) {
       pages.push(current);
       current = [];
       currentLen = header.length;
     }
     current.push(line);
-    currentLen += line.length + 1;
+    currentLen += line.length + 2;
   }
   if (current.length) pages.push(current);
 
   return pages.map((page, idx) => {
     const suffix = pages.length > 1 ? ` (${idx + 1}/${pages.length})` : '';
-    return `${header}${suffix}\n${page.join('\n')}`;
+    return `${header}${suffix}\n\n${page.join('\n\n')}`;
   });
 }
 
