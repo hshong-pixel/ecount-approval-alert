@@ -25,6 +25,28 @@ async function clickTextInAnyFrame(page, text, timeoutMs = 20000) {
   throw new Error(`"${text}" 메뉴/탭 요소를 화면에서 찾지 못했습니다 (${timeoutMs}ms 대기). Ecount 화면 구조가 변경되었을 수 있습니다.`);
 }
 
+// GitHub Actions는 매번 새 브라우저 환경이라 "새 기기" 알림 팝업이 뜰 수 있다.
+// 존재하면 확인 버튼을 클릭하고, 없으면 조용히 넘어간다 (실패로 취급하지 않음).
+async function dismissIfPresent(page, text, logger, timeoutMs = 8000) {
+  try {
+    await clickTextInAnyFrame(page, text, timeoutMs);
+    logger.info(`"${text}" 팝업 확인 클릭 완료`);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// 이카운트 자체 클라이언트 코드가 디버그용으로 비밀번호를 콘솔에 그대로 찍는 경우가 있어,
+// 로그로 남기기 전에 실제 비밀번호 값과 password 필드 패턴을 모두 마스킹한다.
+function redact(text, config) {
+  if (!text) return text;
+  let out = String(text);
+  if (config.password) out = out.split(config.password).join('***REDACTED***');
+  out = out.replace(/password["']?\s*:\s*["']?[^,}"'\s]+/gi, 'password: ***REDACTED***');
+  return out;
+}
+
 // 브라우저 컨텍스트 안에서 실행되는 함수 (DOM 직접 접근)
 function extractorInPage(approverName) {
   function normalize(s) {
@@ -109,21 +131,23 @@ export async function fetchPendingApprovals(config, logger) {
     page = await context.newPage();
     // 중복 로그인 등 confirm/alert 팝업이 뜨면 자동으로 수락 (헤드리스 실행이라 사람이 클릭할 수 없음)
     page.on('dialog', (dialog) => {
-      networkLog.push(`[dialog] type=${dialog.type()} message=${dialog.message()}`);
+      networkLog.push(`[dialog] type=${dialog.type()} message=${redact(dialog.message(), config)}`);
       dialog.accept().catch(() => {});
     });
-    page.on('console', (msg) => networkLog.push(`[console:${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => networkLog.push(`[pageerror] ${err.message}`));
+    page.on('console', (msg) => networkLog.push(`[console:${msg.type()}] ${redact(msg.text(), config)}`));
+    page.on('pageerror', (err) => networkLog.push(`[pageerror] ${redact(err.message, config)}`));
     page.on('request', (req) => {
       if (req.method() === 'POST' || /login|auth|save/i.test(req.url())) {
-        networkLog.push(`[request] ${req.method()} ${req.url()}`);
+        networkLog.push(`[request] ${req.method()} ${redact(req.url(), config)}`);
       }
     });
     page.on('response', async (response) => {
       const req = response.request();
       if (req.method() === 'POST' || /login|auth|save/i.test(response.url())) {
         const bodySnippet = await response.text().catch(() => '(body unavailable)');
-        networkLog.push(`[response] status=${response.status()} url=${response.url()} body=${bodySnippet.slice(0, 500)}`);
+        networkLog.push(
+          `[response] status=${response.status()} url=${redact(response.url(), config)} body=${redact(bodySnippet.slice(0, 500), config)}`
+        );
       }
     });
 
@@ -143,10 +167,13 @@ export async function fetchPendingApprovals(config, logger) {
     } catch (err) {
       const bodyText = await page.textContent('body').catch(() => '');
       throw new Error(
-        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 300)}. 네트워크/콘솔 로그: ${networkLog.join(' | ')}`
+        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${redact((bodyText || '').slice(0, 300), config)}. 네트워크/콘솔 로그: ${networkLog.join(' | ')}`
       );
     }
     logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
+
+    // GitHub Actions 러너는 매번 새 기기로 인식되어 "새 기기 알림" 확인 팝업이 뜰 수 있다.
+    await dismissIfPresent(page, '확인', logger, 8000);
 
     for (const step of NAV_STEPS) {
       await clickTextInAnyFrame(page, step);
