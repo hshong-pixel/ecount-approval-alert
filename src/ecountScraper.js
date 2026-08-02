@@ -5,17 +5,24 @@ import path from 'path';
 // 로그인 후 클릭 순서: 그룹웨어 탭 -> 전자결재 서브탭 -> 기안서통합관리(좌측 메뉴) -> 진행중 탭
 const NAV_STEPS = ['그룹웨어', '전자결재', '기안서통합관리', '진행중'];
 
-async function clickTextInAnyFrame(page, text) {
-  for (const frame of page.frames()) {
-    try {
-      const locator = frame.getByText(text, { exact: true }).first();
-      await locator.click({ timeout: 3000 });
-      return frame;
-    } catch (err) {
-      // 이 프레임에는 없음 - 다음 프레임 시도
+// 로그인 직후에는 중간 처리 페이지(erp_login_processor 등)를 거쳐 대시보드가 늦게 렌더링될 수 있어,
+// 단발성 시도 대신 지정한 시간 동안 프레임들을 반복 폴링하며 클릭을 시도한다.
+async function clickTextInAnyFrame(page, text, timeoutMs = 20000) {
+  const start = Date.now();
+  let lastErr;
+  while (Date.now() - start < timeoutMs) {
+    for (const frame of page.frames()) {
+      try {
+        const locator = frame.getByText(text, { exact: true }).first();
+        await locator.click({ timeout: 1500 });
+        return frame;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+    await page.waitForTimeout(500);
   }
-  throw new Error(`"${text}" 메뉴/탭 요소를 화면에서 찾지 못했습니다. Ecount 화면 구조가 변경되었을 수 있습니다.`);
+  throw new Error(`"${text}" 메뉴/탭 요소를 화면에서 찾지 못했습니다 (${timeoutMs}ms 대기). Ecount 화면 구조가 변경되었을 수 있습니다.`);
 }
 
 // 브라우저 컨텍스트 안에서 실행되는 함수 (DOM 직접 접근)
