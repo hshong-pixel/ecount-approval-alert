@@ -27,14 +27,29 @@ async function clickTextInAnyFrame(page, text, timeoutMs = 20000) {
 
 // GitHub Actions는 매번 새 브라우저 환경이라 "새 기기" 알림 팝업이 뜰 수 있다.
 // 존재하면 확인 버튼을 클릭하고, 없으면 조용히 넘어간다 (실패로 취급하지 않음).
+// getByText(exact)만으로는 버튼이 아닌 다른 "확인" 텍스트에 가려지거나 매칭에 실패할 수 있어
+// role=button 검색도 함께 시도한다.
 async function dismissIfPresent(page, text, logger, timeoutMs = 8000) {
-  try {
-    await clickTextInAnyFrame(page, text, timeoutMs);
-    logger.info(`"${text}" 팝업 확인 클릭 완료`);
-    return true;
-  } catch (err) {
-    return false;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    for (const frame of page.frames()) {
+      for (const locator of [
+        frame.getByRole('button', { name: text }).first(),
+        frame.getByText(text, { exact: true }).first(),
+      ]) {
+        try {
+          await locator.click({ timeout: 1000 });
+          logger.info(`"${text}" 팝업 버튼 클릭 완료`);
+          return true;
+        } catch (err) {
+          // 다음 후보로 계속
+        }
+      }
+    }
+    await page.waitForTimeout(300);
   }
+  logger.info(`"${text}" 팝업이 감지되지 않아 넘어감 (${timeoutMs}ms 대기)`);
+  return false;
 }
 
 // 이카운트 자체 클라이언트 코드가 디버그용으로 비밀번호를 콘솔에 그대로 찍는 경우가 있어,
