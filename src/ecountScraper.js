@@ -191,8 +191,9 @@ export async function fetchPendingApprovals(config, logger) {
     }
     logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
 
-    // GitHub Actions 러너는 매번 새 기기로 인식되어 "새 기기 알림" 확인 팝업이 뜰 수 있다.
-    await dismissIfPresent(page, '확인', logger, 8000);
+    // GitHub Actions 러너는 매번 새 기기로 인식되어 "새로운 기기 로그인 알림" 팝업이 뜰 수 있다.
+    // 매번 새 환경이라 기기를 등록해봐야 다음 실행에 이어지지 않으므로 "등록안함"을 클릭한다.
+    await dismissIfPresent(page, '등록안함', logger, 8000);
 
     for (const step of NAV_STEPS) {
       await clickTextInAnyFrame(page, step);
