@@ -5,51 +5,65 @@ import path from 'path';
 // 로그인 후 클릭 순서: 그룹웨어 탭 -> 전자결재 서브탭 -> 기안서통합관리(좌측 메뉴) -> 진행중 탭
 const NAV_STEPS = ['그룹웨어', '전자결재', '기안서통합관리', '진행중'];
 
-// 로그인 직후에는 중간 처리 페이지(erp_login_processor 등)를 거쳐 대시보드가 늦게 렌더링될 수 있어,
-// 단발성 시도 대신 지정한 시간 동안 프레임들을 반복 폴링하며 클릭을 시도한다.
-async function clickTextInAnyFrame(page, text, timeoutMs = 20000) {
+// GitHub Actions는 매번 새 브라우저 환경이라 "새로운 기기 로그인 알림" 팝업이 뜰 수 있다.
+// 매번 새 환경이라 기기를 등록해봐야 다음 실행에 이어지지 않으므로 "등록안함"을 클릭한다.
+// 이 팝업은 로그인 URL 전환 직후 뜨지 않고 몇 초~수십 초 뒤에 늦게 나타나기도 해서,
+// 한 번만 확인하지 않고 이후 메뉴 클릭 폴링 루프 안에서도 매 반복마다 확인한다.
+const BLOCKING_POPUP_BUTTON = '등록안함';
+
+// 단발성 시도로, 지금 이 순간 팝업이 있으면 닫고 true, 없으면 false를 반환한다 (예외를 던지지 않음).
+async function tryDismissBlockingPopup(page) {
+  for (const frame of page.frames()) {
+    for (const locator of [
+      frame.getByRole('button', { name: BLOCKING_POPUP_BUTTON }).first(),
+      frame.getByText(BLOCKING_POPUP_BUTTON, { exact: true }).first(),
+    ]) {
+      try {
+        await locator.click({ timeout: 500 });
+        return true;
+      } catch (err) {
+        // 다음 후보/프레임으로 계속
+      }
+    }
+  }
+  return false;
+}
+
+// 로그인 직후 지정한 시간 동안 팝업이 나타나는지 폴링하며 감시한다 (없으면 실패로 취급하지 않음).
+async function dismissIfPresent(page, logger, timeoutMs = 20000) {
   const start = Date.now();
-  let lastErr;
   while (Date.now() - start < timeoutMs) {
+    if (await tryDismissBlockingPopup(page)) {
+      logger.info(`"${BLOCKING_POPUP_BUTTON}" 팝업 버튼 클릭 완료`);
+      return true;
+    }
+    await page.waitForTimeout(300);
+  }
+  logger.info(`"${BLOCKING_POPUP_BUTTON}" 팝업이 감지되지 않아 넘어감 (${timeoutMs}ms 대기)`);
+  return false;
+}
+
+// 로그인 직후에는 중간 처리 페이지(erp_login_processor 등)를 거쳐 대시보드가 늦게 렌더링될 수 있고,
+// 새 기기 알림 팝업이 이 시점에 뒤늦게 나타나 메뉴를 가릴 수도 있어, 단발성 시도 대신 지정한 시간
+// 동안 반복마다 팝업 여부를 먼저 확인한 뒤 클릭을 시도한다.
+async function clickTextInAnyFrame(page, text, logger, timeoutMs = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await tryDismissBlockingPopup(page)) {
+      logger.info(`"${BLOCKING_POPUP_BUTTON}" 팝업 버튼 클릭 완료 (메뉴 대기 중 감지됨)`);
+    }
     for (const frame of page.frames()) {
       try {
         const locator = frame.getByText(text, { exact: true }).first();
         await locator.click({ timeout: 1500 });
         return frame;
       } catch (err) {
-        lastErr = err;
+        // 다음 프레임으로 계속
       }
     }
     await page.waitForTimeout(500);
   }
   throw new Error(`"${text}" 메뉴/탭 요소를 화면에서 찾지 못했습니다 (${timeoutMs}ms 대기). Ecount 화면 구조가 변경되었을 수 있습니다.`);
-}
-
-// GitHub Actions는 매번 새 브라우저 환경이라 "새 기기" 알림 팝업이 뜰 수 있다.
-// 존재하면 확인 버튼을 클릭하고, 없으면 조용히 넘어간다 (실패로 취급하지 않음).
-// getByText(exact)만으로는 버튼이 아닌 다른 "확인" 텍스트에 가려지거나 매칭에 실패할 수 있어
-// role=button 검색도 함께 시도한다.
-async function dismissIfPresent(page, text, logger, timeoutMs = 8000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    for (const frame of page.frames()) {
-      for (const locator of [
-        frame.getByRole('button', { name: text }).first(),
-        frame.getByText(text, { exact: true }).first(),
-      ]) {
-        try {
-          await locator.click({ timeout: 1000 });
-          logger.info(`"${text}" 팝업 버튼 클릭 완료`);
-          return true;
-        } catch (err) {
-          // 다음 후보로 계속
-        }
-      }
-    }
-    await page.waitForTimeout(300);
-  }
-  logger.info(`"${text}" 팝업이 감지되지 않아 넘어감 (${timeoutMs}ms 대기)`);
-  return false;
 }
 
 // 이카운트 자체 클라이언트 코드가 디버그용으로 비밀번호를 콘솔에 그대로 찍는 경우가 있어,
@@ -191,12 +205,10 @@ export async function fetchPendingApprovals(config, logger) {
     }
     logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
 
-    // GitHub Actions 러너는 매번 새 기기로 인식되어 "새로운 기기 로그인 알림" 팝업이 뜰 수 있다.
-    // 매번 새 환경이라 기기를 등록해봐야 다음 실행에 이어지지 않으므로 "등록안함"을 클릭한다.
-    await dismissIfPresent(page, '등록안함', logger, 8000);
+    await dismissIfPresent(page, logger, 20000);
 
     for (const step of NAV_STEPS) {
-      await clickTextInAnyFrame(page, step);
+      await clickTextInAnyFrame(page, step, logger);
       logger.info(`"${step}" 클릭 완료`);
       await page.waitForTimeout(1000);
     }
