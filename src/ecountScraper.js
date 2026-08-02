@@ -58,15 +58,17 @@ function extractorInPage(approverName) {
   return { found: false };
 }
 
-async function saveDebugArtifacts(page, logger) {
+async function saveDebugArtifacts(page, logger, networkLog) {
   const dir = path.join(process.cwd(), 'debug-artifacts');
   await mkdir(dir, { recursive: true });
   const screenshotPath = path.join(dir, 'failure.png');
   const htmlPath = path.join(dir, 'failure.html');
+  const logPath = path.join(dir, 'network-console.log');
   await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
   const html = await page.content().catch(() => '');
   await writeFile(htmlPath, html, 'utf8').catch(() => {});
-  logger.warn(`디버그용 스크린샷/HTML 저장됨: ${screenshotPath}, ${htmlPath} (Actions 아티팩트로 업로드됨)`);
+  await writeFile(logPath, (networkLog || []).join('\n'), 'utf8').catch(() => {});
+  logger.warn(`디버그용 스크린샷/HTML/로그 저장됨: ${screenshotPath}, ${htmlPath}, ${logPath} (Actions 아티팩트로 업로드됨)`);
 }
 
 async function findApprovalTable(page, approverName, timeoutMs = 15000) {
@@ -88,11 +90,30 @@ async function findApprovalTable(page, approverName, timeoutMs = 15000) {
 export async function fetchPendingApprovals(config, logger) {
   const browser = await chromium.launch({ headless: true });
   let page;
+  const networkLog = [];
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      locale: 'ko-KR',
+      timezoneId: 'Asia/Seoul',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9' },
+    });
     page = await context.newPage();
     // 중복 로그인 등 confirm/alert 팝업이 뜨면 자동으로 수락 (헤드리스 실행이라 사람이 클릭할 수 없음)
     page.on('dialog', (dialog) => dialog.accept().catch(() => {}));
+    page.on('console', (msg) => networkLog.push(`[console:${msg.type()}] ${msg.text()}`));
+    page.on('response', async (response) => {
+      try {
+        const req = response.request();
+        if (req.method() === 'POST' && response.url().replace(/\/$/, '') === config.loginUrl.replace(/\/$/, '')) {
+          const bodySnippet = await response.text().catch(() => '');
+          networkLog.push(`[login POST] status=${response.status()} body=${bodySnippet.slice(0, 1000)}`);
+        }
+      } catch (e) {
+        // 응답 본문을 읽을 수 없는 경우 무시
+      }
+    });
 
     logger.info('이카운트 로그인 페이지 접속 중');
     await page.goto(config.loginUrl, { waitUntil: 'domcontentloaded' });
@@ -107,7 +128,7 @@ export async function fetchPendingApprovals(config, logger) {
     } catch (err) {
       const bodyText = await page.textContent('body').catch(() => '');
       throw new Error(
-        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 500)}`
+        `로그인 실패 또는 응답 시간 초과 (현재 URL: ${page.url()}). 화면 내용 일부: ${(bodyText || '').slice(0, 500)}. 네트워크/콘솔 로그: ${networkLog.slice(-10).join(' | ')}`
       );
     }
     logger.info(`로그인 성공 (이동된 URL: ${page.url()})`);
@@ -128,7 +149,7 @@ export async function fetchPendingApprovals(config, logger) {
     return result.rows;
   } catch (err) {
     if (page) {
-      await saveDebugArtifacts(page, logger);
+      await saveDebugArtifacts(page, logger, networkLog);
     }
     throw err;
   } finally {
