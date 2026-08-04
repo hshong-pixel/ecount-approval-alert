@@ -187,12 +187,12 @@ export async function fetchPendingApprovals(config, logger) {
     // 네트워크가 잠잠해질 때까지(=관련 모듈 로드 완료) 기다린 뒤 입력을 시작한다.
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
-    // 이 로그인 폼은 #save가 type="button"이라 자체 제출 기능이 없고, 자바스크립트가 keyup 등
-    // 키 입력 이벤트로 "입력 완료"를 감지해 클릭을 처리하는 구조로 보인다. fill()은 값만 넣고
-    // 키 이벤트를 발생시키지 않아 클릭이 무시될 수 있어, 실제 타이핑처럼 한 글자씩 입력한다.
-    await page.locator('#com_code').pressSequentially(config.comCode, { delay: 30 });
-    await page.locator('#id').pressSequentially(config.id, { delay: 30 });
-    await page.locator('#passwd').pressSequentially(config.password, { delay: 30 });
+    // 한 글자씩 타이핑(pressSequentially)하던 방식은 CI 환경에서 간헐적으로 글자가 누락/오타
+    // 나는 것으로 의심되어(같은 비밀번호로 성공/실패가 반복됨), 값을 한 번에 정확히 넣는
+    // fill()로 되돌린다. 위 networkidle 대기가 로그인 버튼 클릭 핸들러 로딩 문제의 실제 해결책이다.
+    await page.fill('#com_code', config.comCode);
+    await page.fill('#id', config.id);
+    await page.fill('#passwd', config.password);
     await page.click('#save');
 
     try {
