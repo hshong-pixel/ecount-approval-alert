@@ -2,7 +2,9 @@ name: Ecount 미결재 카카오 알림
 
 on:
   schedule:
-    - cron: '0 23 * * *' # 매일 08:00 KST (UTC+9)
+    # 매주 월~금 08:00 KST (UTC+9). 23:00 UTC는 다음날 KST 08:00이 되므로
+    # KST 기준 월~금이 되려면 UTC 요일은 일~목(0-4)이어야 한다.
+    - cron: '0 23 * * 0-4'
   workflow_dispatch: {}
 
 permissions:
