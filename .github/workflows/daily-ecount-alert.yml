@@ -2,9 +2,11 @@ name: Ecount 미결재 카카오 알림
 
 on:
   schedule:
-    # 매주 월~금 08:00 KST (UTC+9). 23:00 UTC는 다음날 KST 08:00이 되므로
+    # 매주 월~금 07:47 KST (UTC+9) 목표. 정각(00분)은 전 세계적으로 예약 실행이 몰려
+    # GitHub Actions 스케줄 지연이 더 심한 편이라, 애매한 분(47분)으로 당겨서 실제
+    # 8시까지는 도착하도록 여유를 둔다. 22:47 UTC는 다음날 KST 07:47이 되므로
     # KST 기준 월~금이 되려면 UTC 요일은 일~목(0-4)이어야 한다.
-    - cron: '0 23 * * 0-4'
+    - cron: '47 22 * * 0-4'
   workflow_dispatch: {}
 
 permissions:

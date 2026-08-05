@@ -34,9 +34,13 @@ npm start
 
 ## 매일 자동 실행 (GitHub Actions)
 
-`.github/workflows/daily-ecount-alert.yml` 이 평일(월~금) 08:00(KST, cron `0 23 * * 0-4` UTC)에
+`.github/workflows/daily-ecount-alert.yml` 이 평일(월~금) 07:47(KST, cron `47 22 * * 0-4` UTC)에
 저장소를 checkout해 `npm ci && npm start`를 실행합니다. 수동 테스트는 저장소의
 Actions 탭 → "Ecount 미결재 카카오 알림" → "Run workflow" 로 가능합니다(`workflow_dispatch`).
+
+> GitHub Actions의 예약 실행(`schedule`)은 정확한 시각을 보장하지 않습니다. 특히 정각(00분)은
+> 전 세계적으로 요청이 몰려 지연이 더 심한 편이라, 실제 8시까지 도착하도록 07:47으로 당겨뒀습니다.
+> 그래도 부하 상황에 따라 몇 분~몇십 분 지연될 수 있습니다.
 
 ### GitHub Secrets 등록
 
